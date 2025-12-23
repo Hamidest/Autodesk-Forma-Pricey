@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Forma Cost Calculator</title>
+
+  <style>
+    body {
+      font-family: "Artifakt Element", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      padding: 12px;
+      font-size: 12px;
+      color: #333;
+    }
+
+    h3 { margin: 0 0 10px 0; font-size: 14px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 12px;
+    }
+
+    th {
+      text-align: left;
+      background: #f2f2f2;
+      padding: 6px;
+      font-weight: 600;
+      border-bottom: 2px solid #ddd;
+    }
+
+    td {
+      padding: 6px;
+      border-bottom: 1px solid #eee;
+      vertical-align: middle;
+    }
+
+    input[type="number"] {
+      width: 90px;
+      padding: 4px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+
+    .right { text-align: right; }
+
+    .currency {
+      font-variant-numeric: tabular-nums;
+      font-family: ui-monospace, monospace;
+    }
+
+    .total-row td {
+      font-weight: bold;
+      border-top: 2px solid #333;
+      background: #fafafa;
+    }
+
+    #refresh-btn {
+      width: 100%;
+      padding: 8px;
+      background: #0696d7;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    #refresh-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    #status {
+      margin: 6px 0 10px;
+      color: #666;
+      font-style: italic;
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <h3>Function Cost Estimator</h3>
+  <div id="status">Analyzing geometry…</div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Function</th>
+        <th class="right">Area (sf)</th>
+        <th class="right">Price / sf</th>
+        <th class="right">Total</th>
+      </tr>
+    </thead>
+    <tbody id="table-body">
+      <tr>
+        <td colspan="4" style="color:#777;">Click “Update from 3D Model”</td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td colspan="3">Grand Total</td>
+        <td id="grand-total" class="currency right">$0</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <button id="refresh-btn">Update from 3D Model</button>
+
+  <script type="module">
+    import { Forma } from "https://esm.sh/forma-embedded-view-sdk/auto";
+
+    const SQM_TO_SQFT = 10.7639;
+    const fmtUSD = new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 0
+    });
+
+    const tbody = document.getElementById("table-body");
+    const statusEl = document.getElementById("status");
+    const btn = document.getElementById("refresh-btn");
+    const grandTotalEl = document.getElementById("grand-total");
+
+    const STORAGE_KEY = "forma_cost_prices";
+    let prices = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    let areas = {};
+
+    btn.addEventListener("click", calculate);
+
+    async function calculate() {
+      btn.disabled = true;
+      statusEl.style.display = "block";
+
+      try {
+        const buildings = await Forma.geometry.getPathsByCategory({ category: "building" });
+
+        if (!buildings.length) {
+          tbody.innerHTML = "<tr><td colspan='4'>No buildings found.</td></tr>";
+          return;
+        }
+
+        const results = await Forma.areaMetrics.calculate({ paths: buildings });
+        areas = {};
+
+        for (const path of buildings) {
+          const breakdown = results?.[path]?.grossFloorArea?.breakdown;
+          if (!breakdown) continue;
+
+          for (const [func, areaM2] of Object.entries(breakdown)) {
+            areas[func] = (areas[func] || 0) + areaM2 * SQM_TO_SQFT;
+          }
+        }
+
+        render();
+      } catch (e) {
+        console.error(e);
+        tbody.innerHTML = "<tr><td colspan='4'>Error reading metrics</td></tr>";
+      } finally {
+        btn.disabled = false;
+        statusEl.style.display = "none";
+      }
+    }
+
+    function render() {
+      tbody.innerHTML = "";
+      let grand = 0;
+
+      Object.keys(areas).sort().forEach(func => {
+        const area = areas[func];
+        const price = prices[func] || 0;
+        const total = area * price;
+        grand += total;
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${func}</td>
+          <td class="right">${Math.round(area).toLocaleString()}</td>
+          <td class="right">
+            <input type="number" min="0" step="10" value="${price}">
+          </td>
+          <td class="currency right">${fmtUSD.format(total)}</td>
+        `;
+
+        const input = tr.querySelector("input");
+        input.addEventListener("input", () => {
+          prices[func] = Number(input.value) || 0;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(prices));
+          render();
+        });
+
+        tbody.appendChild(tr);
+      });
+
+      grandTotalEl.textContent = fmtUSD.format(grand);
+    }
+  </script>
+</body>
+</html>
