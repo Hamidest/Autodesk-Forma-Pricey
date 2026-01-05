@@ -1,137 +1,124 @@
-### Part 2: The Logic (HTML + JavaScript)
-This is the code you host on GitHub. I have separated the **Calculation Logic** from the **UI** within the script so you can easily modify the math without breaking the interface.
-
-**`index.html`**
-```html
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Forma Area Calculator</title>
-    <!-- 1. Load the Forma SDK -->
-    <script src="https://app.autodeskforma.com/embedded-view-sdk/v1.js"></script>
-    
-    <!-- Simple CSS for the panel -->
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Forma Cost Calculator</title>
     <style>
-        body { font-family: 'Inter', sans-serif; padding: 20px; background-color: #f9f9f9; }
-        h3 { margin-top: 0; color: #333; }
-        .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 15px; }
-        .btn { width: 100%; padding: 10px; background: #0696D7; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .btn:hover { background: #057bb0; }
-        .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
-        .row:last-child { border-bottom: none; }
-        .total { font-weight: bold; margin-top: 10px; border-top: 2px solid #333; padding-top: 10px; }
-        #loading { color: #666; font-style: italic; display: none; }
+      :root { --bg:#0b0f14; --panel:#111826; --muted:#93a4b8; --text:#e6eef8; --border:#223044; }
+      * { box-sizing: border-box; }
+      body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }
+      header { padding: 14px 14px 10px; border-bottom: 1px solid var(--border); }
+      header h1 { margin:0; font-size: 14px; font-weight: 700; letter-spacing: .2px; }
+      header p { margin:6px 0 0; font-size: 12px; color: var(--muted); line-height: 1.35; }
+      .wrap { padding: 12px 14px 16px; display: grid; gap: 10px; }
+      .row { display:flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      button {
+        background: #1a2a42; color: var(--text);
+        border: 1px solid var(--border); border-radius: 10px;
+        padding: 8px 10px; font-size: 12px; cursor: pointer;
+      }
+      button:hover { filter: brightness(1.08); }
+      button:disabled { opacity: .5; cursor: not-allowed; }
+      .pill {
+        border: 1px solid var(--border); background: var(--panel);
+        padding: 8px 10px; border-radius: 10px; font-size: 12px; color: var(--muted);
+      }
+      .panel {
+        border: 1px solid var(--border); background: var(--panel);
+        border-radius: 14px; padding: 10px;
+      }
+      .panel h2 { margin:0 0 8px; font-size: 13px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border-bottom: 1px solid var(--border); padding: 8px 6px; font-size: 12px; text-align: left; }
+      th { color: var(--muted); font-weight: 600; }
+      td input {
+        width: 110px; max-width: 100%;
+        padding: 6px 8px; border-radius: 10px;
+        border: 1px solid var(--border); background: #0c1420; color: var(--text);
+      }
+      .right { text-align: right; }
+      .muted { color: var(--muted); }
+      .totals { display:grid; gap: 6px; }
+      .totals .line { display:flex; justify-content: space-between; font-size: 12px; }
+      .ok { color: #9ff0c5; }
+      .warn { color: #ffd28a; }
+      .err { color: #ff9aa2; }
+      .small { font-size: 11px; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
     </style>
-</head>
-<body>
+  </head>
+  <body>
+    <header>
+      <h1>Cost Calculator (by Function)</h1>
+      <p>
+        Select elements in Forma → click <b>Refresh from selection</b>.
+        Uses <span class="muted">Area Metrics → Gross Floor Area → Function breakdown</span>.
+      </p>
+    </header>
 
-    <!-- UI SECTION -->
-    <div class="card">
-        <h3>Area by Function</h3>
-        <p style="font-size: 12px; color: #666;">Reads 'function' and 'grossFloorArea' properties from the active proposal.</p>
-        <button class="btn" onclick="runCalculation()">Update Calculations</button>
-        <p id="loading">Scanning project tree...</p>
-    </div>
+    <div class="wrap">
+      <div class="row">
+        <button id="btnRefresh">Refresh from selection</button>
+        <button id="btnAll">Use entire model</button>
+        <button id="btnResetRates">Reset rates</button>
+        <span class="pill" id="status">Loading SDK…</span>
+      </div>
 
-    <div id="results-container" class="card" style="display:none;">
-        <div id="metrics-list"></div>
-        <div class="row total">
-            <span>Total GFA</span>
-            <span id="total-area">0 m²</span>
+      <div class="panel">
+        <div class="row" style="justify-content: space-between;">
+          <h2 style="margin:0;">Function breakdown</h2>
+          <div class="row" style="gap:8px;">
+            <label class="pill" style="display:flex; gap:8px; align-items:center;">
+              <input type="checkbox" id="toggleSqft" checked />
+              <span>Show in ft² (convert from m²)</span>
+            </label>
+            <label class="pill" style="display:flex; gap:8px; align-items:center;">
+              <span>Currency</span>
+              <select id="currency" style="background:#0c1420;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:6px 8px;">
+                <option value="$">$</option>
+                <option value="€">€</option>
+                <option value="£">£</option>
+              </select>
+            </label>
+          </div>
         </div>
+
+        <div style="overflow:auto; margin-top:8px;">
+          <table id="tbl">
+            <thead>
+              <tr>
+                <th>Function</th>
+                <th class="right">Area</th>
+                <th class="right">Rate</th>
+                <th class="right">Cost</th>
+              </tr>
+            </thead>
+            <tbody id="tbody">
+              <tr><td colspan="4" class="muted">No data yet. Click <b>Refresh from selection</b>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div style="margin-top:10px; display:grid; gap:10px;">
+          <div class="panel" style="background:#0c1420;">
+            <div class="totals">
+              <div class="line"><span class="muted">Area total</span><span id="areaTotal">—</span></div>
+              <div class="line"><span class="muted">Cost total</span><span id="costTotal">—</span></div>
+              <div class="line small muted">
+                <span>Notes</span>
+                <span id="notes" class="right">—</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="muted small">
+            API used: <code>Forma.selection.getSelection()</code> + <code>Forma.areaMetrics.calculate({ paths })</code>.
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- LOGIC SECTION -->
-    <script>
-        const Forma = window.Forma;
-
-        // --- 1. The Calculation Logic (Edit this to change how areas are summed) ---
-        async function calculateProposalAreas() {
-            const stats = {};
-            let totalGFA = 0;
-
-            // Get the current proposal data
-            const proposal = await Forma.proposal.get();
-            const rootId = proposal.rootElementId;
-
-            // Recursive function to walk through every element in the project
-            async function traverse(elementId) {
-                const element = await Forma.elements.get(elementId);
-
-                // A. Check if element has a defined function (e.g. "Residential", "Commercial")
-                // Note: The property name might differ depending on how your project is set up.
-                // Common keys: 'function', 'usage', 'program'
-                const functionName = element.properties?.function || element.properties?.usage || "Unassigned";
-                
-                // B. Check if element has Area data
-                // Forma elements often store GFA directly if generated by the Forma generator
-                let area = 0;
-                
-                if (element.properties?.grossFloorArea) {
-                    area = element.properties.grossFloorArea;
-                } else if (element.properties?.area) {
-                    area = element.properties.area;
-                }
-                
-                // Only count if area > 0 to avoid clutter
-                if (area > 0) {
-                    if (!stats[functionName]) stats[functionName] = 0;
-                    stats[functionName] += area;
-                    totalGFA += area;
-                }
-
-                // C. Dig deeper if the element has children (like a group or a building composed of floors)
-                if (element.children && element.children.length > 0) {
-                    for (const childId of element.children) {
-                        await traverse(childId);
-                    }
-                }
-            }
-
-            // Start the loop
-            await traverse(rootId);
-            
-            return { stats, totalGFA };
-        }
-
-        // --- 2. The Interaction Logic (Updates the HTML) ---
-        async function runCalculation() {
-            // Show loading state
-            document.getElementById('loading').style.display = 'block';
-            document.getElementById('results-container').style.display = 'none';
-
-            try {
-                // Run the math defined above
-                const { stats, totalGFA } = await calculateProposalAreas();
-
-                // Clear previous results
-                const list = document.getElementById('metrics-list');
-                list.innerHTML = '';
-
-                // Generate new rows for the table
-                for (const [func, area] of Object.entries(stats)) {
-                    const row = document.createElement('div');
-                    row.className = 'row';
-                    row.innerHTML = `<span>${func}</span> <span>${Math.round(area).toLocaleString()} m²</span>`;
-                    list.appendChild(row);
-                }
-
-                // Update Total
-                document.getElementById('total-area').innerText = Math.round(totalGFA).toLocaleString() + " m²";
-                
-                // Show results
-                document.getElementById('results-container').style.display = 'block';
-
-            } catch (error) {
-                console.error(error);
-                alert("Error calculating areas. See console for details.");
-            } finally {
-                document.getElementById('loading').style.display = 'none';
-            }
-        }
-    </script>
-</body>
+    <script type="module" src="./main.js"></script>
+  </body>
 </html>
-```
