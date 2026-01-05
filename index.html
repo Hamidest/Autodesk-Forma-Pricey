@@ -1,200 +1,137 @@
+### Part 2: The Logic (HTML + JavaScript)
+This is the code you host on GitHub. I have separated the **Calculation Logic** from the **UI** within the script so you can easily modify the math without breaking the interface.
+
+**`index.html`**
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Forma Cost Calculator</title>
-
-  <style>
-    body {
-      font-family: "Artifakt Element", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      padding: 12px;
-      font-size: 12px;
-      color: #333;
-    }
-
-    h3 { margin: 0 0 10px 0; font-size: 14px; }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 12px;
-    }
-
-    th {
-      text-align: left;
-      background: #f2f2f2;
-      padding: 6px;
-      font-weight: 600;
-      border-bottom: 2px solid #ddd;
-    }
-
-    td {
-      padding: 6px;
-      border-bottom: 1px solid #eee;
-      vertical-align: middle;
-    }
-
-    input[type="number"] {
-      width: 90px;
-      padding: 4px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-    }
-
-    .right { text-align: right; }
-
-    .currency {
-      font-variant-numeric: tabular-nums;
-      font-family: ui-monospace, monospace;
-    }
-
-    .total-row td {
-      font-weight: bold;
-      border-top: 2px solid #333;
-      background: #fafafa;
-    }
-
-    #refresh-btn {
-      width: 100%;
-      padding: 8px;
-      background: #0696d7;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: bold;
-    }
-
-    #refresh-btn:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-
-    #status {
-      margin: 6px 0 10px;
-      color: #666;
-      font-style: italic;
-      display: none;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forma Area Calculator</title>
+    <!-- 1. Load the Forma SDK -->
+    <script src="https://app.autodeskforma.com/embedded-view-sdk/v1.js"></script>
+    
+    <!-- Simple CSS for the panel -->
+    <style>
+        body { font-family: 'Inter', sans-serif; padding: 20px; background-color: #f9f9f9; }
+        h3 { margin-top: 0; color: #333; }
+        .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 15px; }
+        .btn { width: 100%; padding: 10px; background: #0696D7; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn:hover { background: #057bb0; }
+        .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
+        .row:last-child { border-bottom: none; }
+        .total { font-weight: bold; margin-top: 10px; border-top: 2px solid #333; padding-top: 10px; }
+        #loading { color: #666; font-style: italic; display: none; }
+    </style>
 </head>
-
 <body>
-  <h3>Function Cost Estimator</h3>
-  <div id="status">Analyzing geometry…</div>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Function</th>
-        <th class="right">Area (sf)</th>
-        <th class="right">Price / sf</th>
-        <th class="right">Total</th>
-      </tr>
-    </thead>
-    <tbody id="table-body">
-      <tr>
-        <td colspan="4" style="color:#777;">Click “Update from 3D Model”</td>
-      </tr>
-    </tbody>
-    <tfoot>
-      <tr class="total-row">
-        <td colspan="3">Grand Total</td>
-        <td id="grand-total" class="currency right">$0</td>
-      </tr>
-    </tfoot>
-  </table>
+    <!-- UI SECTION -->
+    <div class="card">
+        <h3>Area by Function</h3>
+        <p style="font-size: 12px; color: #666;">Reads 'function' and 'grossFloorArea' properties from the active proposal.</p>
+        <button class="btn" onclick="runCalculation()">Update Calculations</button>
+        <p id="loading">Scanning project tree...</p>
+    </div>
 
-  <button id="refresh-btn">Update from 3D Model</button>
+    <div id="results-container" class="card" style="display:none;">
+        <div id="metrics-list"></div>
+        <div class="row total">
+            <span>Total GFA</span>
+            <span id="total-area">0 m²</span>
+        </div>
+    </div>
 
-  <script type="module">
-    import { Forma } from "https://esm.sh/forma-embedded-view-sdk/auto";
+    <!-- LOGIC SECTION -->
+    <script>
+        const Forma = window.Forma;
 
-    const SQM_TO_SQFT = 10.7639;
-    const fmtUSD = new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: "USD",
-      maximumFractionDigits: 0
-    });
+        // --- 1. The Calculation Logic (Edit this to change how areas are summed) ---
+        async function calculateProposalAreas() {
+            const stats = {};
+            let totalGFA = 0;
 
-    const tbody = document.getElementById("table-body");
-    const statusEl = document.getElementById("status");
-    const btn = document.getElementById("refresh-btn");
-    const grandTotalEl = document.getElementById("grand-total");
+            // Get the current proposal data
+            const proposal = await Forma.proposal.get();
+            const rootId = proposal.rootElementId;
 
-    const STORAGE_KEY = "forma_cost_prices";
-    let prices = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-    let areas = {};
+            // Recursive function to walk through every element in the project
+            async function traverse(elementId) {
+                const element = await Forma.elements.get(elementId);
 
-    btn.addEventListener("click", calculate);
+                // A. Check if element has a defined function (e.g. "Residential", "Commercial")
+                // Note: The property name might differ depending on how your project is set up.
+                // Common keys: 'function', 'usage', 'program'
+                const functionName = element.properties?.function || element.properties?.usage || "Unassigned";
+                
+                // B. Check if element has Area data
+                // Forma elements often store GFA directly if generated by the Forma generator
+                let area = 0;
+                
+                if (element.properties?.grossFloorArea) {
+                    area = element.properties.grossFloorArea;
+                } else if (element.properties?.area) {
+                    area = element.properties.area;
+                }
+                
+                // Only count if area > 0 to avoid clutter
+                if (area > 0) {
+                    if (!stats[functionName]) stats[functionName] = 0;
+                    stats[functionName] += area;
+                    totalGFA += area;
+                }
 
-    async function calculate() {
-      btn.disabled = true;
-      statusEl.style.display = "block";
+                // C. Dig deeper if the element has children (like a group or a building composed of floors)
+                if (element.children && element.children.length > 0) {
+                    for (const childId of element.children) {
+                        await traverse(childId);
+                    }
+                }
+            }
 
-      try {
-        const buildings = await Forma.geometry.getPathsByCategory({ category: "building" });
-
-        if (!buildings.length) {
-          tbody.innerHTML = "<tr><td colspan='4'>No buildings found.</td></tr>";
-          return;
+            // Start the loop
+            await traverse(rootId);
+            
+            return { stats, totalGFA };
         }
 
-        const results = await Forma.areaMetrics.calculate({ paths: buildings });
-        areas = {};
+        // --- 2. The Interaction Logic (Updates the HTML) ---
+        async function runCalculation() {
+            // Show loading state
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('results-container').style.display = 'none';
 
-        for (const path of buildings) {
-          const breakdown = results?.[path]?.grossFloorArea?.breakdown;
-          if (!breakdown) continue;
+            try {
+                // Run the math defined above
+                const { stats, totalGFA } = await calculateProposalAreas();
 
-          for (const [func, areaM2] of Object.entries(breakdown)) {
-            areas[func] = (areas[func] || 0) + areaM2 * SQM_TO_SQFT;
-          }
+                // Clear previous results
+                const list = document.getElementById('metrics-list');
+                list.innerHTML = '';
+
+                // Generate new rows for the table
+                for (const [func, area] of Object.entries(stats)) {
+                    const row = document.createElement('div');
+                    row.className = 'row';
+                    row.innerHTML = `<span>${func}</span> <span>${Math.round(area).toLocaleString()} m²</span>`;
+                    list.appendChild(row);
+                }
+
+                // Update Total
+                document.getElementById('total-area').innerText = Math.round(totalGFA).toLocaleString() + " m²";
+                
+                // Show results
+                document.getElementById('results-container').style.display = 'block';
+
+            } catch (error) {
+                console.error(error);
+                alert("Error calculating areas. See console for details.");
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
         }
-
-        render();
-      } catch (e) {
-        console.error(e);
-        tbody.innerHTML = "<tr><td colspan='4'>Error reading metrics</td></tr>";
-      } finally {
-        btn.disabled = false;
-        statusEl.style.display = "none";
-      }
-    }
-
-    function render() {
-      tbody.innerHTML = "";
-      let grand = 0;
-
-      Object.keys(areas).sort().forEach(func => {
-        const area = areas[func];
-        const price = prices[func] || 0;
-        const total = area * price;
-        grand += total;
-
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${func}</td>
-          <td class="right">${Math.round(area).toLocaleString()}</td>
-          <td class="right">
-            <input type="number" min="0" step="10" value="${price}">
-          </td>
-          <td class="currency right">${fmtUSD.format(total)}</td>
-        `;
-
-        const input = tr.querySelector("input");
-        input.addEventListener("input", () => {
-          prices[func] = Number(input.value) || 0;
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(prices));
-          render();
-        });
-
-        tbody.appendChild(tr);
-      });
-
-      grandTotalEl.textContent = fmtUSD.format(grand);
-    }
-  </script>
+    </script>
 </body>
 </html>
+```
